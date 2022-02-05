@@ -1,5 +1,6 @@
 # do not import anything else from loss_socket besides LossyUDP
 import struct
+from concurrent.futures import ThreadPoolExecutor
 
 from lossy_socket import LossyUDP
 # do not import anything else from socket except INADDR_ANY
@@ -19,6 +20,9 @@ class Streamer:
         self.buffer = {}
         self.send_number = 0
         self.sequence_number = -1
+        self.closed = False
+        executor = ThreadPoolExecutor(max_workers=1)
+        executor.submit(self.listener)
 
     def send(self, data_bytes: bytes) -> None:
         """Note that data_bytes can be larger than one packet."""
@@ -50,15 +54,10 @@ class Streamer:
         # your code goes here!  The code below should be changed!
 
         while (self.sequence_number + 1) not in self.buffer:
-            data, addr = self.socket.recvfrom()
-            data_string = data.decode('utf8')
-            split = data_string.split("\n", 1)
-            data_sequence_number = int(split[0][5:])
-            self.buffer[data_sequence_number] = split[1]
+            pass
         decoded_payload = self.buffer[self.sequence_number + 1]
         del self.buffer[self.sequence_number + 1]
         payload = decoded_payload.encode()
-        print(payload)
         self.sequence_number += 1
         # this sample code just calls the recvfrom method on the LossySocket
 
@@ -71,4 +70,20 @@ class Streamer:
         """Cleans up. It should block (wait) until the Streamer is done with all
            the necessary ACKs and retransmissions"""
         # your code goes here, especially after you add ACKs and retransmissions.
-        pass
+        self.closed = True
+        self.socket.stoprecv()
+
+    def listener(self):
+        while not self.closed:  # a later hint will explain self.closed
+            try:
+                data, addr = self.socket.recvfrom()
+                data_string = data.decode('utf8')
+                split = data_string.split("\n", 1)
+                if len(split[0][5:]) == 0:
+                    pass
+                else:
+                    data_sequence_number = int(split[0][5:])
+                    self.buffer[data_sequence_number] = split[1]
+            except Exception as e:
+                print("listener died!")
+                print(e)

@@ -9,7 +9,6 @@ def receive(s):
     expected = 0
     str_buf = ""
     while expected < NUMS:
-        print("tried to receive again")
         data = s.recv()
         print("recv returned {%s}" % data.decode('utf-8'))
         str_buf += data.decode('utf-8')
