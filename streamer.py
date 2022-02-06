@@ -15,6 +15,7 @@ class Streamer:
            and does not introduce any simulated packet loss."""
         self.socket = LossyUDP()
         self.socket.bind((src_ip, src_port))
+        self.src_port = src_port
         self.dst_ip = dst_ip
         self.dst_port = dst_port
         self.buffer = {}
@@ -33,7 +34,7 @@ class Streamer:
         i = 0
         done = False
         while not done:
-            header = "snum:" + str(self.send_number) + "\n"
+            header = "ACK? 0\n" + "snum:" + str(self.send_number) + "\n"
             if i + 1000 >= length:
                 end = length
                 done = True
@@ -45,6 +46,15 @@ class Streamer:
             part = part1 + part2
             self.socket.sendto(part, (self.dst_ip, self.dst_port))
             i = i + 1000
+
+            ack = False
+            while not ack and not self.closed:
+                time.sleep(0.01)
+                data, addr = self.socket.recvfrom()
+                ack_header = data.decode('utf8').split("\n", 2)[0]
+                ack = bool(int(ack_header[5])) and self.send_number == int(data.decode('utf8').split("\n", 2)[1][5:])
+                if not ack:
+                    self.socket.sendto(data, addr)
             if not done:
                 self.send_number += 1
         self.send_number += 1
@@ -74,16 +84,22 @@ class Streamer:
         self.socket.stoprecv()
 
     def listener(self):
-        while not self.closed:  # a later hint will explain self.closed
+        while not self.closed:
             try:
                 data, addr = self.socket.recvfrom()
                 data_string = data.decode('utf8')
-                split = data_string.split("\n", 1)
-                if len(split[0][5:]) == 0:
-                    pass
+                split = data_string.split("\n", 2)
+                if len(split) <= 2:
+                    continue
+                if len(split[1][5:]) == 0:
+                    continue
+                elif not bool(int(data.decode('utf8').split("\n", 2)[0][5])):
+                    data_sequence_number = int(split[1][5:])
+                    self.buffer[data_sequence_number] = split[2]
+                    header = "ACK? 1\n" + "snum:" + str(data_sequence_number) + "\n"
+                    self.socket.sendto(header.encode("utf8"), addr)
                 else:
-                    data_sequence_number = int(split[0][5:])
-                    self.buffer[data_sequence_number] = split[1]
+                    self.socket.sendto(data, addr)
             except Exception as e:
                 print("listener died!")
                 print(e)
