@@ -23,6 +23,8 @@ class Streamer:
         self.send_number = 0
         self.sequence_number = -1
         self.closed = False
+        self.fin_ack1_found = False
+        self.fin_ack2_found = False
         executor = ThreadPoolExecutor(max_workers=1)
         executor.submit(self.listener)
 
@@ -35,7 +37,7 @@ class Streamer:
         i = 0
         done = False
         while not done:
-            header = "ACK? 0\n" + "snum:" + str(self.send_number) + "\n"
+            header = "FIN? 0\n" + "ACK? 0\n" + "snum:" + str(self.send_number) + "\n"
             if i + 1000 >= length:
                 end = length
                 done = True
@@ -75,6 +77,30 @@ class Streamer:
         """Cleans up. It should block (wait) until the Streamer is done with all
            the necessary ACKs and retransmissions"""
         # your code goes here, especially after you add ACKs and retransmissions.
+        header = "FIN? 1\n" + "ACK? 0\n" + "snum:" + str(self.send_number) + "\n"
+        fin_packet = header.encode()
+        self.socket.sendto(fin_packet, (self.dst_ip, self.dst_port))
+        start_time = time.time()
+
+        # search for ack for first fin
+        while not self.fin_ack1_found:
+            time.sleep(0.1)
+            if time.time() - start_time >= 0.25:
+                self.socket.sendto(fin_packet, (self.dst_ip, self.dst_port))
+
+                start_time = time.time()
+        self.send_number += 1
+
+        # search for ack for second fin
+        fin2_packet = "FIN? 2\n" + "ACK? 0\n" + "snum:" + str(self.send_number) + "\n"
+        fin2_packet = fin2_packet.encode()
+        while not self.fin_ack2_found:
+            time.sleep(0.1)
+            if time.time() - start_time >= 0.25:
+                self.socket.sendto(fin2_packet, (self.dst_ip, self.dst_port))
+                start_time = time.time()
+        self.send_number += 1
+        time.sleep(2)
         self.closed = True
         self.socket.stoprecv()
 
@@ -83,21 +109,37 @@ class Streamer:
             try:
                 data, addr = self.socket.recvfrom()
                 data_string = data.decode('utf8')
-                split = data_string.split("\n", 2)
+                split = data_string.split("\n", 3)
 
                 if len(split) <= 2:
                     continue
                 if len(split[1][5:]) == 0:
                     continue
-                ack_field = int(data.decode('utf8').split("\n", 2)[0][5])
-                if not bool(ack_field):
-                    data_sequence_number = int(split[1][5:])
-                    self.data_buffer[data_sequence_number] = split[2]
-                    header = "ACK? 1\n" + "snum:" + str(data_sequence_number) + "\n"
+                ack_field = int(data.decode('utf8').split("\n", 3)[1][5])
+                fin_field = int(data.decode('utf8').split("\n", 3)[0][5])
+                if fin_field == 1 and not bool(ack_field):
+                    data_sequence_number = int(split[2][5:])
+                    header = "FIN? 1\n" + "ACK? 1\n" + "snum:" + str(data_sequence_number) + "\n"
+                    self.socket.sendto(header.encode("utf8"), addr)
+                    second_fin = "FIN? 2\n" + "ACK? 0\n" + "snum:" + str(data_sequence_number + 1) + "\n"
+                    self.socket.sendto(second_fin.encode("utf8"), addr)
+                elif fin_field == 2 and not bool(ack_field):
+                    data_sequence_number = int(split[2][5:])
+                    header = "FIN? 2\n" + "ACK? 1\n" + "snum:" + str(data_sequence_number + 1) + "\n"
+                    self.socket.sendto(header.encode("utf8"), addr)
+                elif not bool(ack_field):
+                    data_sequence_number = int(split[2][5:])
+                    self.data_buffer[data_sequence_number] = split[3]
+                    header = "FIN? 0\n" + "ACK? 1\n" + "snum:" + str(data_sequence_number) + "\n"
                     self.socket.sendto(header.encode("utf8"), addr)
                 else:
-                    data_sequence_number = int(split[1][5:])
-                    self.ack_buffer[data_sequence_number] = True
+                    if fin_field == 1:
+                        self.fin_ack1_found = True
+                    elif fin_field == 2:
+                        self.fin_ack2_found = True
+                    else:
+                        data_sequence_number = int(split[2][5:])
+                        self.ack_buffer[data_sequence_number] = True
             except Exception as e:
                 print("listener died!")
                 print(e)
