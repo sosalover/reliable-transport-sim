@@ -25,7 +25,7 @@ def receive(s):
                 sys.exit(-1)
             else:
                 # we only received the first part of the number at the end
-                # we must leave it in the buffer and read more.
+                # we must leave it in the data_buffer and read more.
                 str_buf = t
                 break
 
@@ -63,7 +63,7 @@ def host2(listen_port, remote_port):
 
 
 def main():
-    lossy_socket.sim = lossy_socket.SimulationParams(loss_rate=0.0, corruption_rate=0.0,
+    lossy_socket.sim = lossy_socket.SimulationParams(loss_rate=0.1, corruption_rate=0.0,
                                                      max_delivery_delay=0.1,
                                                      become_reliable_after=100000.0)
 

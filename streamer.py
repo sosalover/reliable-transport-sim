@@ -18,7 +18,8 @@ class Streamer:
         self.src_port = src_port
         self.dst_ip = dst_ip
         self.dst_port = dst_port
-        self.buffer = {}
+        self.data_buffer = {}
+        self.ack_buffer = {}
         self.send_number = 0
         self.sequence_number = -1
         self.closed = False
@@ -38,40 +39,34 @@ class Streamer:
             if i + 1000 >= length:
                 end = length
                 done = True
-
             else:
                 end = i + 1000
             part1 = header.encode('utf8')
             part2 = data_bytes[i: end]
             part = part1 + part2
             self.socket.sendto(part, (self.dst_ip, self.dst_port))
-            i = i + 1000
 
-            ack = False
-            while not ack and not self.closed:
-                time.sleep(0.01)
-                data, addr = self.socket.recvfrom()
-                ack_header = data.decode('utf8').split("\n", 2)[0]
-                ack = bool(int(ack_header[5])) and self.send_number == int(data.decode('utf8').split("\n", 2)[1][5:])
-                if not ack:
-                    self.socket.sendto(data, addr)
+            start_time = time.time()
+            while self.send_number not in self.ack_buffer:
+                time.sleep(0.1)
+                if time.time() - start_time >= 0.25:
+                    self.socket.sendto(part, (self.dst_ip, self.dst_port))
+                    start_time = time.time()
             if not done:
                 self.send_number += 1
+            i = i + 1000
         self.send_number += 1
 
     def recv(self) -> bytes:
         """Blocks (waits) if no data is ready to be read from the connection."""
         # your code goes here!  The code below should be changed!
 
-        while (self.sequence_number + 1) not in self.buffer:
+        while (self.sequence_number + 1) not in self.data_buffer:
             pass
-        decoded_payload = self.buffer[self.sequence_number + 1]
-        del self.buffer[self.sequence_number + 1]
+        decoded_payload = self.data_buffer[self.sequence_number + 1]
+        del self.data_buffer[self.sequence_number + 1]
         payload = decoded_payload.encode()
         self.sequence_number += 1
-        # this sample code just calls the recvfrom method on the LossySocket
-
-        # For now, I'll just pass the full UDP payload to the app
 
         return payload
 
@@ -89,17 +84,20 @@ class Streamer:
                 data, addr = self.socket.recvfrom()
                 data_string = data.decode('utf8')
                 split = data_string.split("\n", 2)
+
                 if len(split) <= 2:
                     continue
                 if len(split[1][5:]) == 0:
                     continue
-                elif not bool(int(data.decode('utf8').split("\n", 2)[0][5])):
+                ack_field = int(data.decode('utf8').split("\n", 2)[0][5])
+                if not bool(ack_field):
                     data_sequence_number = int(split[1][5:])
-                    self.buffer[data_sequence_number] = split[2]
+                    self.data_buffer[data_sequence_number] = split[2]
                     header = "ACK? 1\n" + "snum:" + str(data_sequence_number) + "\n"
                     self.socket.sendto(header.encode("utf8"), addr)
                 else:
-                    self.socket.sendto(data, addr)
+                    data_sequence_number = int(split[1][5:])
+                    self.ack_buffer[data_sequence_number] = True
             except Exception as e:
                 print("listener died!")
                 print(e)
